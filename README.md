@@ -9,7 +9,7 @@ DSH 自带的 `dsh-schedule` 只能**给自己**定时提醒，不能跨会话�
 而会话「结束得不像结束」是常态：`error`、`max-tokens`、或者跑到一半静默了。
 本插件补的就是这一块。
 
-## 四个工具
+## 五个工具
 
 | 工具 | 作用 |
 |---|---|
@@ -116,10 +116,19 @@ DSH 自带的 `dsh-schedule` 只能**给自己**定时提醒，不能跨会话�
 
 ## 安装
 
+从 npm 装：
+
 ```bash
-# profile 已配置好后重启 web 进程即可
-grep -n "auto-wake" ~/.dsh/profiles/web/cordis.patch.yml
+dsh plugin --profile web add dsh-auto-wake
 ```
+
+或者本地目录装：
+
+```bash
+dsh plugin --profile web add /path/to/dsh-auto-wake
+```
+
+装完重启 web 进程，然后在「设置 → 会话自动唤醒」里管理规则。
 
 状态文件：`~/.dsh/auto-wake/state.json`（原子写，重启自动恢复）
 
