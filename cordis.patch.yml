@@ -1,0 +1,4 @@
+# dsh-auto-wake bundle patch：只 insert 一行，
+# 不写 inject —— inject 会整体替换宿主解析出的服务依赖，
+# 因此本插件所有服务依赖在 index.js 内用 ctx.get() 判空降级。
+- insert: [{ id: auto-wake, name: 'dsh-auto-wake' }]

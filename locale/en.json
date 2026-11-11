@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Auto-Wake",
+    "description": "Attach a wake rule to any session; the host periodically checks whether its latest turn looks unfinished and genuinely wakes it to keep working."
+  }
+}
