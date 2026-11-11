@@ -13,6 +13,15 @@
     "automation"
   ],
   "license": "MIT",
+  "author": "lzlrt",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lzlrt/dsh-auto-wake.git"
+  },
+  "homepage": "https://github.com/lzlrt/dsh-auto-wake#readme",
+  "bugs": {
+    "url": "https://github.com/lzlrt/dsh-auto-wake/issues"
+  },
   "type": "module",
   "main": "index.js",
   "exports": {
