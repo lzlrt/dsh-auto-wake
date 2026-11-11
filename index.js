@@ -6,7 +6,7 @@
  * 且没有待办），或命中关键词时，通过 `sessionController.prompt` 真正把它叫醒
  * （resolveAgent 会自动 resume 冷会话）。
  *
- * 设计约束（对应团队契约）：
+ * 设计约束：
  *  1. 所有宿主服务一律 `ctx.get(name)` 后判空，缺失只降级对应功能，
  *     绝不让插件整体加载失败（cordis.patch.yml 里也因此不写 inject）。
  *  2. 全局只有一个定时器：每次重算「最近的义务时刻」，不做「一规则一 interval」。
@@ -66,16 +66,16 @@ const DAY_MINUTES = 24 * 60
 const BEIJING_OFFSET_MINUTES = 480
 
 /**
- * REV B1：连续多少次「读不到会话」就停机。
+ * 连续多少次「读不到会话」就停机。
  * 读不到是通道问题（日志被清理、迁移、权限变化），不是目标会话不干活，
  * 所以它走独立的计数与上限，绝不与 stallCount 混用。
  */
 const READ_FAILURE_LIMIT = 20
 
 /**
- * REV M-R5：但纯次数阈值会随 everySeconds 变化 —— 60s 间隔 20 次是 20 分钟，
- * 3600s 间隔 20 次是 20 小时，同一份代码失效速度差 60 倍。
- * 所以再加一条时间阈值：连续读不到超过这么久就停机，两个条件谁先到算谁。
+ * 纯次数阈值会随轮询间隔变化：60s 间隔 20 次是 20 分钟，
+ * 3600s 间隔 20 次则是 20 小时，同一份代码的失效速度差 60 倍。
+ * 因此再叠加一条时间阈值：连续读不到超过这么久就停机，两个条件谁先到算谁。
  */
 const READ_FAILURE_WINDOW_MS = 10 * 60 * 1000
 /** 小时/天额度默认值。 */
@@ -210,10 +210,10 @@ function fail(code, message) {
 /**
  * 展开默认状态路径：`~/.dsh/auto-wake/state.json`。
  *
- * FIX 5：原先落在 `~/.dsh/storages/auto-wake.json`，但 `storages/` 是
- * storage-json 后端的保留根（dsh-base 里 `root: dshHomePath('storages')`），
- * domain 的文档就是 `storages/<unit>.json`。今天不撞车，但将来若新增同名
- * domain，双方会以 malformed/version-mismatch 互相拒绝启动。改用插件私有目录。
+ * 不用 `~/.dsh/storages/`：那是 storage-json 后端的保留根
+ * （dsh-base 里 `root: dshHomePath('storages')`），domain 文档就是
+ * `storages/<unit>.json`。一旦将来出现同名 domain，双方会以
+ * malformed/version-mismatch 互相拒绝启动。插件使用私有目录彻底避开。
  *
  * DSH_HOME 优先（容器内是 /root/.dsh），空白值忽略，否则回落到 ~/.dsh。
  */
@@ -384,12 +384,12 @@ function normalizeRule(raw) {
     dayWindowStart: num(raw.dayWindowStart, now),
     failureCount: Math.max(0, Math.round(num(raw.failureCount, 0))),
     stallCount: Math.max(0, Math.round(num(raw.stallCount, 0))),
-    // REV B1：连续「读不到会话」的次数。与 stallCount 分开记——读不到是通道问题，
+    // 连续「读不到会话」的次数。与 stallCount 分开记：读不到是通道问题，
     // 投递了没动静才是目标会话的问题，两者混用会让熔断逻辑互相打架。
     readFailures: Math.max(0, Math.round(num(raw.readFailures, 0))),
-    // REV M-R5：连续读失败的起始时间（时间阈值用）。0 = 当前没有在读失败。
+    // 连续读失败的起始时间（供时间阈值使用）。0 表示当前没有在读失败。
     readFailingSince: Math.max(0, Math.round(num(raw.readFailingSince, 0))),
-    // REV B2：投递进行中标记。护栏看到它就直接跳过，挡住并发穿透。
+    // 投递进行中标记。护栏看到它就直接跳过，挡住并发穿透。
     inFlight: raw.inFlight === true,
   }
 }
@@ -458,7 +458,7 @@ function windowCount(rule, kind, now) {
 /**
  * 从事件流里提取检测所需的事实。
  *
- * FIX 2：`assistant/message` 里**没有** `finish` 字段（AssistantMessage 只有
+ * `assistant/message` 里**没有** `finish` 字段（AssistantMessage 只有
  * {id, content, source, role}）。「这一轮怎么结束的」唯一权威来源是 `turn/end`
  * 的 `data.reason.kind`，取值 completed / aborted / blocked / error / max-tokens /
  * interrupted / forked。
@@ -473,7 +473,7 @@ function windowCount(rule, kind, now) {
 function inspectEvents(events) {
   let lastTurnEndReason = undefined
   let lastTurnEndError = undefined
-  // FIX 3：turn 号会被复用/回绕，用 seq 比较才稳。
+  // turn 号会被复用/回绕，用 seq 比较才稳。
   let lastTurnStartSeq = 0
   let lastTurnEndSeq = 0
   let lastActivityAt = 0
@@ -494,7 +494,7 @@ function inspectEvents(events) {
         if (seq > lastTurnStartSeq) lastTurnStartSeq = seq
         break
       case 'turn/end': {
-        // FIX 2：结束原因只认这里。
+        // 结束原因只认这里。
         if (seq > lastTurnEndSeq) lastTurnEndSeq = seq
         const reason = data !== undefined && isRecord(data.reason) ? data.reason : undefined
         if (reason !== undefined) {
@@ -504,7 +504,7 @@ function inspectEvents(events) {
         break
       }
       case 'assistant/message': {
-        // FIX 2：不再读 message.finish（该字段不存在）；只收文本用于关键词匹配。
+        // 不读 message.finish（该字段不存在）；这里只收文本用于关键词匹配。
         const message = data !== undefined && isRecord(data.message) ? data.message : undefined
         if (message !== undefined && Array.isArray(message.content)) {
           for (const block of message.content) {
@@ -545,10 +545,10 @@ function inspectEvents(events) {
   // 只保留最近 20 条文本，避免长会话把内存/开销拖起来。
   const tailTexts = recentTexts.slice(-20)
 
-  // FIX 3：用 seq 判断「最后一条 turn 类事件是不是 start」，turn 号复用也不会误判。
+  // 用 seq 判断「最后一条 turn 类事件是不是 start」，turn 号复用也不会误判。
   const turnOpen = lastTurnStartSeq > lastTurnEndSeq
 
-  // FIX 2：只有 error / max-tokens 算异常结束。
+  // 只有 error / max-tokens 算异常结束。
   const errored = lastTurnEndReason === 'error'
   const truncated = lastTurnEndReason === 'max-tokens'
   const abortedOrInterrupted = lastTurnEndReason === 'aborted'
@@ -573,7 +573,7 @@ function inspectEvents(events) {
 /**
  * 判断一条会话当前是不是「正在跑」。
  *
- * FIX 3：Session 上根本没有 busy/running/active 字段（恒 undefined），
+ * Session 上没有 busy/running/active 字段（恒 undefined），
  * 真实判据是 live Agent 的 status。sessionProjections 的 turnBoundary 作双保险。
  *
  * @param {object} ctx cordis 上下文。
@@ -602,7 +602,7 @@ function isSessionBusy(ctx, sessionId) {
 /**
  * 读取一个会话的事件流（只读，不 resume）。
  *
- * FIX 1：`sessionQuery` 上没有 `read()`，真实方法叫 `readSession()`，
+ * `sessionQuery` 上没有 `read()`，真实方法叫 `readSession()`，
  * 返回 `{ session, inheritedEventCount, events }`。原代码的
  * `typeof sessionQuery.read === 'function'` 恒为 false，导致整个分支是死代码，
  * readSessionFacts 恒返回 no_reader —— 规则从来不会触发。
@@ -628,7 +628,7 @@ async function readSessionFacts(ctx, sessionId) {
     }
   }
 
-  // 兜底：热会话自己。FIX 1：Session 没有 .events，只有 snapshotEvents()。
+  // 兜底：热会话自己。Session 没有 .events，只有 snapshotEvents()。
   const sessions = ctx.get('sessions')
   const live = sessions !== undefined && typeof sessions.get === 'function' ? sessions.get(sessionId) : undefined
   if (live !== undefined && typeof live.snapshotEvents === 'function') {
@@ -672,10 +672,10 @@ function evaluate(rule, facts, now) {
   // 关键词模式：命中即唤醒（不看「是否结束得像结束」）。
   if (rule.trigger === 'keyword') {
     if (rule.keywords.length === 0) return { fire: false, reason: 'no_keyword', progressed }
-    // REV H1：recentText 是**历史窗口**，不是「这次新说的话」。
-    // 只拿它匹配的话，一句很久以前说过的关键词会一直命中，额度被一个陈旧关键词吃光，
-    // 而且看起来每次都在「正常工作」—— 这是最难的查的那种错。
-    // 所以要求「命中关键词」且「确实有新事件」（即 progressed），否则不算。
+    // recentText 是**历史窗口**，并不等于「这次新说的话」。
+    // 若只用它匹配，一句很久以前说过的关键词会持续命中，额度被陈旧关键词吃光，
+    // 表面却一直像在「正常工作」——这是最难排查的一类故障。
+    // 因此要求「命中关键词」且「确实有新事件」（即 progressed），否则不算。
     if (!progressed) return { fire: false, reason: 'keyword_no_new_event', progressed }
     for (const keyword of rule.keywords) {
       if (facts.recentText.includes(keyword)) {
@@ -694,10 +694,10 @@ function evaluate(rule, facts, now) {
 
   // 默认 unfinished 模式：按四条信号判定。
   if (facts.busy) return { fire: false, reason: 'busy', progressed }
-  // FIX 2 语义：[error] 与 [max-tokens] 是唯一两种可自愈的异常结束。
+  // 语义：[error] 与 [max-tokens] 是唯一两种可自愈的异常结束。
   if (facts.errored) return { fire: true, reason: 'error', progressed }
   if (facts.truncated) return { fire: true, reason: 'max-tokens', progressed }
-  // FIX 2 语义：aborted / interrupted / forked 是有人（或系统）主动收尾，不是「不像结束」。
+  // 语义：aborted / interrupted / forked 是有人（或系统）主动收尾，不是「不像结束」。
   //   aborted 尤其不能唤醒 —— 用户就是不想让它继续；而 interrupted 是崩溃补记，已被 turnOpen 覆盖。
   if (facts.abortedOrInterrupted) return { fire: false, reason: `ended:${facts.lastTurnEndReason}`, progressed }
   if (facts.turnOpen) return { fire: true, reason: 'turn-open', progressed }
@@ -739,7 +739,7 @@ export function apply(ctx, config) {
   let ticking = false
   /** 本轮 tick 里是否有改动需要落盘。 */
   let dirty = false
-  /** REV B3：最近一次落盘失败原因，工具层用它决定是否回 ok:false。 */
+  /** 最近一次落盘失败原因，工具层据此决定是否返回 ok:false。 */
   let lastPersistError
   /** 插件是否已 dispose。 */
   let disposed = false
@@ -804,9 +804,9 @@ export function apply(ctx, config) {
   /**
    * 落盘。**返回是否真的写成功**。
    *
-   * REV B3：原先这个函数吞掉写失败、静默返回 undefined，调用方（create/delete）
-   * 却照样回 ok:true —— 结果是「模型被告知规则已创建，重启后规则凭空消失」，
-   * 而用户唯一的线索是 logger.error。丢数据必须让调用方看得见。
+   * 写失败必须让调用方看得见：调用方（create/delete）一旦吞掉失败照旧返回 ok:true，
+   * 就会出现「模型被告知规则已创建，重启后规则凭空消失」，
+   * 而用户唯一的线索只有 logger.error。
    *
    * @returns {Promise<boolean>} true = 已确认落盘。
    */
@@ -861,7 +861,7 @@ export function apply(ctx, config) {
   function guardrailRefusal(rule, now, options = {}) {
     rollWindows(rule, now)
 
-    // REV B2 / H-R1：上一次投递还没回来时，任何**投递**路径都不许再穿一次。
+    // 上一次投递还没回来时，任何**投递**路径都不许再穿一次。
     // 但 dryRun 必须能穿透这条：它只回答「现在会不会唤醒」，不产生副作用。
     if (options.forDelivery === true && rule.inFlight === true) return 'in_flight'
     if (rule.firesHour >= rule.maxPerHour) return 'hour_quota'
@@ -902,7 +902,7 @@ export function apply(ctx, config) {
     const text = renderWakeText(rule, reason)
 
     try {
-      // FIX 4：给 prompt 传取消信号。宿主签名就是 prompt(request, signal)，
+      // 给 prompt 传取消信号。宿主签名就是 prompt(request, signal)，
       // 它内部第一句 await resolveAgent，冷会话要完整 resume（可能等 writer lock）。
       // 没有超时的话一条冷规则能把整轮 tick 无限期占住。
       const result = await sessionController.prompt({
@@ -956,7 +956,7 @@ export function apply(ctx, config) {
     }
 
     if (factsResult.error !== undefined) {
-      // REV B1：这里绝不能清 stallCount。
+      // 这里绝不能清 stallCount。
       // 原先写了 `rule.stallCount = 0`，等于开了第二个熔断复位点，而且方向还是反的：
       // 会话日志被清理 / 迁移 / 权限变化导致持续 no_reader 时，每个 tick 都把计数清零，
       // 于是一条永远读不到的规则**永远不会熔断**，只能靠额度空转到用完 —— 然后下个窗口继续。
@@ -985,7 +985,7 @@ export function apply(ctx, config) {
     rule.readFailures = 0
     rule.readFailingSince = 0
 
-    // FIX 3：busy 来自 readSessionFacts（agents 服务），inspectEvents 只看事件流拿不到它，
+    // busy 来自 readSessionFacts（agents 服务），inspectEvents 只看事件流拿不到它，
     // 必须在这里合流，否则 evaluate 里的 facts.busy 永远是 undefined。
     const facts = { ...inspectEvents(factsResult.events), busy: factsResult.busy === true }
     const verdict = evaluate(rule, facts, now)
@@ -1017,16 +1017,16 @@ export function apply(ctx, config) {
       return
     }
 
-    // REV H-R2：熔断判定必须放到**投递成功之后**。
-    // 原先在这里先 `stallCount += 1` 再判 `>= max` 并 return，等于用户设的 N 实际只投递 N-1 次
-    // ——最后那次唤醒永远不会发生，而 tripped 是不可恢复终态。
+    // 熔断判定必须放在**投递成功之后**。
+    // 若先 `stallCount += 1` 再判 `>= max` 并 return，用户设的 N 实际只会投递 N-1 次
+    // ——最后一次唤醒永远不会发生，而 tripped 是不可恢复终态。
     // 正确语义：投递 → 成功 → 才算「又多了一次无进展」→ 到上限才熔断。
 
-    // REV B2：投递是异步的（prompt 内部要 resolveAgent，冷会话可能等几十秒）。
-    // 如果等 await 回来再记额度，整个投递窗口里护栏都「看不见这次投递」，
+    // 投递是异步的（prompt 内部要 resolveAgent，冷会话可能等几十秒）。
+    // 若等 await 回来才记额度，整个投递窗口里护栏都「看不见这次投递」，
     // 第二条并发路径（autowake_run 把 nextCheckAt 拉到现在 / 另一条到期规则）
-    // 就能再穿一次护栏 —— 自愈型 error 会话会在 30s 内连收两条相同唤醒。
-    // 所以：进 await 之前先把账记上、占住额度，失败再回滚。
+    // 就能再穿一次护栏——自愈型 error 会话会在 30s 内连收两条相同唤醒。
+    // 因此：进 await 之前先记账、占住额度，失败再回滚。
     rule.firesTotal += 1
     rule.firesHour += 1
     rule.firesDay += 1
@@ -1080,7 +1080,7 @@ export function apply(ctx, config) {
         .filter(rule => rule.status === 'active' && rule.nextCheckAt <= now)
         .slice(0, MAX_RULES_PER_TICK)
 
-      // FIX 4：规则之间并发，而不是串行。prompt 内部会真实 await resolveAgent
+      // 规则之间并发，而不是串行。prompt 内部会真实 await resolveAgent
       // 去 resume 冷会话，串行时一条冷规则会把后面所有规则一起顺延，
       // 而 ticking=true 会让下一次 tick 直接 return，造成集体漂移。
       await Promise.allSettled(due.map(async (rule) => {
@@ -1115,18 +1115,18 @@ export function apply(ctx, config) {
     // 重启恢复：把已经过期的 nextCheckAt 收敛到「现在 + 一个轮询间隔」，
     // 避免重启瞬间把所有规则同时打出去。
     //
-    // REV H2：但只在**确实过期**时动它，且要用 min 而不是直接覆盖。
-    // 原先无条件写成 now + everySeconds，等于用户设的 initialDelaySeconds
+    // 只在**确实过期**时动它，且用 min 兜住上限而不是直接覆盖。
+    // 若无条件写成 now + everySeconds，用户设的 initialDelaySeconds
     // 每重启一次就被重算一次（initialDelaySeconds:0 的规则重启后变成 now+60s），
-    // 而且这里绕过了 MAX_EVERY_SECONDS 夹取。
-    // 补一个 nextCheckAt === 0（=「尽快」）也要收敛，否则 0 会被当成已过期。
+    // 而且会绕过 MAX_EVERY_SECONDS 夹取。
+    // nextCheckAt === 0（表示「尽快」）同样要收敛，否则 0 会被当作已过期。
     const now = Date.now()
     for (const rule of state.rules) {
-      // REV M-R4(小版本)：上次进程死在投递途中时，磁盘上会留下 inFlight === true。
+      // 上次进程死在投递途中时，磁盘上会留下 inFlight === true。
       //
       // 为什么只在这里自愈、而不在投递后再补一次 persist：
       // 投递后补写意味着每条规则每次唤醒都多一次全量写盘（state.json 是整文档重写），
-      // 而且那次写失败时连告警都不该发（投递已经成功了），等于凭空多一个
+      // 而且那次写失败时连告警都不该发（投递已经成功），等于凭空多一个
       // 「可能变慢、又没法报警」的环节。启动时本来就要读一次盘，在这里处理零成本。
       //
       // 语义选择：**保留**当时预占的额度。那次唤醒可能真的发出去了，
@@ -1136,10 +1136,10 @@ export function apply(ctx, config) {
         rule.lastResult = 'crash_during_delivery'
         logger.warn(`auto-wake: 规则 ${rule.id} 上次在投递途中中断，已复位；这次唤醒按已消耗额度计`)
       }
-      // REV M-R3：必须加抖动。
-      // 不加的话，宕机一段时间后所有过期规则会被压到同一个节拍上，
-      // 于是重启后的第一个 tick 里多个会话同秒被唤醒 —— 目标侧 resume 扎堆、
-      // 额度一次烧光，而且看起来像「插件抽风」。抖动上限取 min(every, 60s)。
+      // 必须加抖动。
+      // 否则宕机一段时间后，所有过期规则会被压到同一个节拍上，
+      // 重启后的第一个 tick 里多个会话同秒被唤醒——目标侧 resume 扎堆、
+      // 额度一次烧光，现象看起来像「插件抽风」。抖动上限取 min(every, 60s)。
       const jitterMs = Math.floor(Math.random() * Math.min(rule.everySeconds, 60) * 1000)
       if (!Number.isFinite(rule.nextCheckAt) || rule.nextCheckAt <= 0) {
         rule.nextCheckAt = now + jitterMs
@@ -1170,7 +1170,7 @@ export function apply(ctx, config) {
     }
   })
 
-  // ── FIX 6：turn/end 事件监听，把最坏唤醒延迟从「≥ everySeconds」压到秒级 ──
+  // ── turn/end 事件监听：把最坏唤醒延迟从「≥ everySeconds」压到秒级 ──
   //
   // 只做轻量标记，不在回调里 await 任何长任务（resume 冷会话可能要几秒）：
   // 命中就把对应规则的 nextCheckAt 拉到现在，让下一次 tick 立刻处理它。
@@ -1846,7 +1846,7 @@ export function apply(ctx, config) {
 
         state.rules.push(rule)
         dirty = true
-        // REV B3：落盘失败必须回滚内存并报错，不能「说成功但其实没存」。
+        // 落盘失败必须回滚内存并报错，不能「说成功但其实没存」。
         const saved = await persist()
         if (!saved) {
           state.rules = state.rules.filter(candidate => candidate.id !== rule.id)
@@ -1947,7 +1947,7 @@ export function apply(ctx, config) {
 
         const [removed] = state.rules.splice(index, 1)
         dirty = true
-        // REV B3：删除同样要确认落盘，否则重启后「已删」的规则会复活。
+        // 删除同样要确认落盘，否则重启后「已删」的规则会复活。
         const saved = await persist()
         if (!saved) {
           state.rules.splice(index, 0, removed)
@@ -2144,7 +2144,7 @@ export function apply(ctx, config) {
 
         if (!dryRun) {
           dirty = true
-          // REV H3：落盘失败要让调用方看见，而不是只留一条 logger.error。
+          // 落盘失败要让调用方看见，而不是只留一条 logger.error。
           const saved = await persist()
           requestTick(0)
           if (!saved) {
