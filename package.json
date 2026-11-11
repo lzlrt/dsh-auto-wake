@@ -1,6 +1,6 @@
 {
   "name": "dsh-auto-wake",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "会话自动唤醒：给任意会话设一条唤醒规则，宿主轮询其最新一轮状态并在满足条件时通过 sessionController.prompt 真正叫醒它继续干活。",
   "keywords": [
     "dsh",
